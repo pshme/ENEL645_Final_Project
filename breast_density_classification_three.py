@@ -14,7 +14,7 @@ from torchvision import transforms
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from tqdm import tqdm
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report
 import seaborn as sns
 import torch.optim as optim
 from torch.optim.lr_scheduler import ExponentialLR, ReduceLROnPlateau
@@ -132,7 +132,7 @@ class ImageModel(nn.Module):
         self.feature_extractor = nn.Sequential(*list(self.feature_extractor.children())[:-1]) # Remove the final fully-connected layer
 
        # Unfreeze 4 layers in ResNet50
-        for param in self.feature_extractor[-7:].parameters():
+        for param in self.feature_extractor[-4:].parameters():
             param.requires_grad = True
 
         self.dropout = nn.Dropout(0.3) # Apply dropout
@@ -190,6 +190,8 @@ def train_epoch(model, data_loader, criterion, optimizer, device):
 # Function to evaluate the model
 def eval_model(model, data_loader, criterion, device):
     model.eval()  # Set the model to evaluation mode
+    true_labels = []
+    predictions = []
     running_loss = 0.0
     correct = 0
     total = 0
@@ -210,14 +212,21 @@ def eval_model(model, data_loader, criterion, device):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
+            true_labels.extend(labels.cpu().numpy())
+            predictions.extend(predicted.cpu().numpy())
+
     epoch_loss = running_loss / len(data_loader)
     epoch_accuracy = correct / total
-    return epoch_loss, epoch_accuracy
+    
+    return epoch_loss, epoch_accuracy, true_labels, predictions
 
 
-# Storing k-fold accuracy and loss
+# Storing k-fold metrics
 fold_accuracies = []
 fold_losses = []
+fold_val_labels = []
+fold_val_predictions = []
+
 k_folds = 5 # Performing 5 k-fold runs
 
 # k-fold cross-validation loop
@@ -242,7 +251,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(indices, all_labels)):
 
     for epoch in range(nepochs):
         train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = eval_model(model, val_loader, criterion, device)
+        val_loss, val_acc, val_labels, val_predictions = eval_model(model, val_loader, criterion, device)
 
         scheduler.step(val_acc)
 
@@ -262,9 +271,13 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(indices, all_labels)):
     model.load_state_dict(torch.load(PATH_BEST))
 
     # Evaluate validation set
-    val_loss, val_accuracy = eval_model(model, val_loader, criterion, device)
+    val_loss, val_accuracy, val_labels, val_predictions = eval_model(model, val_loader, criterion, device)
     fold_losses.append(val_loss)
     fold_accuracies.append(val_accuracy)
+
+    # Save all labels and predictions after each fold
+    fold_val_labels.append(val_labels)
+    fold_val_predictions.append(val_predictions)
 
     print(f"Fold {fold + 1}: Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy * 100:.2f}%")
 
@@ -273,15 +286,21 @@ print("Cross-Validation Complete!")
 print(f"Average Validation Accuracy: {np.mean(fold_accuracies) * 100:.2f}%")
 print(f"Standard Deviation of Accuracy: {np.std(fold_accuracies) * 100:.2f}%")
 
-# Initializing dataloader for test dataset
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
 # Use the model from the k-fold with the best validation accuracy
 best_fold_idx = np.argmax(fold_accuracies)
 print(f"Best fold is Fold {best_fold_idx + 1} with Validation Accuracy: {fold_accuracies[best_fold_idx] * 100:.2f}%")
+print("\nClassification Report:")
+print(classification_report(fold_val_labels[best_fold_idx], fold_val_predictions[best_fold_idx], target_names=["AB", "C", "D"]))
+
+
+######################################## Testing ########################################
+
+# Initializing dataloader for test dataset
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
 # Testing the best model using the test data
-model.load_state_dict(torch.load(PATH_BEST))
-test_loss, test_accuracy = eval_model(model, test_loader, criterion, device)
+test_loss, test_accuracy, test_labels, test_predictions = eval_model(model, test_loader, criterion, device)
 print(f"Test Loss: {test_loss:.4f}")
 print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
+print("\nClassification Report:")
+print(classification_report(test_labels, test_predictions, target_names=["AB", "C", "D"]))
