@@ -24,9 +24,9 @@ from sklearn.model_selection import StratifiedKFold
 ######################################## Paths and Parameters ########################################
 
 # Train, validation, and test paths for images in /home folder
-TRAIN_PATH = r"/home/peter.shmerko/final_project/MW_DATA/TRAIN/output_images"
-VAL_PATH = r"/home/peter.shmerko/final_project/MW_DATA/VAL/output_images"
-TEST_PATH = r"/home/peter.shmerko/final_project/MW_DATA/TEST/output_images"
+TRAIN_PATH = r"/home/anhela.francees/Density_Classification_ML/MW_DATA/TRAIN"
+VAL_PATH = r"/home/anhela.francees/Density_Classification_ML/MW_DATA/VAL"
+TEST_PATH = r"/home/anhela.francees/Density_Classification_ML/MW_DATA/TEST"
 
 batch_size = 6 # Batch size
 num_workers = 4 # Number of workers
@@ -304,3 +304,61 @@ print(f"Test Loss: {test_loss:.4f}")
 print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
 print("\nClassification Report:")
 print(classification_report(test_labels, test_predictions, target_names=["A", "B", "C", "D"]))
+
+####################################### Saliency Map (explainability) ########################################
+
+def preprocess_image(image_path):
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    image = Image.open(image_path).convert('RGB')
+    image = image.resize((224, 224))  # Resize original image for correct alignment
+    image_tensor = transform(image).unsqueeze(0).to(device)  # Add batch dimension
+    return image, image_tensor
+
+def generate_saliency_map(model, image_tensor):
+    image_tensor.requires_grad_() # the computational grapgh of the input image is required for computing the derivatives.
+    output = model(image_tensor)
+    class_idx = torch.argmax(output).item() # the index of the class with the highest classification score
+    score = output[0, class_idx]
+    
+    model.zero_grad() # clear the gradients from the previous computations to avoid accummulating gradients
+    score.backward() # back-propagation: compute the gradients of the input image with respect the classification score
+    
+    saliency, _ = torch.max(image_tensor.grad.data.abs(), dim=1) # get the max gradient across the 3 channels (RGB)
+    # produces a single-channel saliency map to highlight the most influential pixels
+    saliency = saliency.squeeze().cpu().numpy() # remove the batch dimension and send image to the CPU to be plotted as a numpy array
+    
+    return saliency, class_idx
+
+def save_saliency_map(image_path, model, output_path="saliency_map.png"):
+    image, image_tensor = preprocess_image(image_path)
+    saliency, class_idx = generate_saliency_map(model, image_tensor)
+    idx_to_label = {0: "A", 1: "B", 2: "C", 3: "D"}
+    class_label = idx_to_label.get(class_idx, str(class_idx))
+    
+    plt.figure(figsize=(10, 5))
+    plt.subplot(1, 2, 1)
+    plt.imshow(image)
+    plt.title("Original Image")
+    plt.axis("off")
+    
+    plt.subplot(1, 2, 2)
+    plt.imshow(saliency, cmap='hot', extent=[0, 224, 0, 224])
+    plt.title(f"Saliency Map (Class {class_label})")
+    plt.axis("off")
+    
+    plt.savefig(output_path, bbox_inches='tight')
+    plt.close()
+
+# Provide an image path to save saliency map
+A_image_path = r"/home/anhela.francees/Density_Classification_ML/MW_DATA/TEST/LASER1_RCC_sep0p0554937m_1686246092357.png"
+B_image_path = r"/home/anhela.francees/Density_Classification_ML/MW_DATA/TEST/WVI53_LCC_sep0p0619619_1729632761088.png" 
+C_image_path = r"/home/anhela.francees/Density_Classification_ML/MW_DATA/TEST/STABLE49_RCC_sep0p0709863m_1682033048143.png"
+D_image_path = r"/home/anhela.francees/Density_Classification_ML/MW_DATA/TEST/CHEMO16_RCC_sep0p034711900000000007_1723479334097.png"
+save_saliency_map(A_image_path, model, "saliency_4class_A.png")
+save_saliency_map(B_image_path, model, "saliency_4class_B.png")
+save_saliency_map(C_image_path, model, "saliency_4class_C.png")
+save_saliency_map(D_image_path, model, "saliency_4class_D.png")
