@@ -325,7 +325,7 @@ def generate_saliency_map(model, image_tensor):
     score = output[0, class_idx]
     
     model.zero_grad() # clear the gradients from the previous computations to avoid accummulating gradients
-    score.backward() # back-propagation: compute the gradients of the input image with respect the classification score
+    score.backward() # back-propagation: compute the gradients of the classification score (prediction probability) with respect to the input image
     
     saliency, _ = torch.max(image_tensor.grad.data.abs(), dim=1) # get the max gradient across the 3 channels (RGB)
     # produces a single-channel saliency map to highlight the most influential pixels
